@@ -99,7 +99,8 @@ def process_labels(zpl_blocks):
 uploaded_file = st.file_uploader(
     "Sube tu archivo .txt o .zpl", 
     type=["txt", "zpl"],
-    help="El archivo debe contener comandos Zebra (^XA ... ^XZ)"
+    help="El archivo debe contener comandos Zebra (^XA ... ^XZ)",
+    key="zpl_file_uploader_unique"  # <--- Esta es la clave que soluciona el error
 )
 
 if uploaded_file:
@@ -254,3 +255,4 @@ st.components.v1.html("""
         <p style="color: #999; font-family: sans-serif; font-size: 14px;">ANUNCIO DE GOOGLE ADSENSE (Cuadrado)</p>
     </div>
 """, height=260)
+
