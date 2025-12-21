@@ -7,7 +7,7 @@ from fpdf import FPDF
 
 # --- CONFIGURACIÓN PARA GOOGLE ADSENSE (ads.txt) ---
 # Reemplaza esta línea con tu ID real de AdSense cuando lo tengas
-ADS_TXT_CONTENT = "google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0"
+ADS_TXT_CONTENT = "google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0"
 
 # Lógica para servir ads.txt (Esencial para la validación de Google)
 query_params = st.query_params
@@ -147,4 +147,5 @@ st.components.v1.html("""
         </div>
     </div>
 """, height=260)
+
 
