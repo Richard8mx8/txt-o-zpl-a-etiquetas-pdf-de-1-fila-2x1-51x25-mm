@@ -5,22 +5,29 @@ import io
 import time
 from fpdf import FPDF
 
-# --- CONFIGURACIÓN PARA GOOGLE ADSENSE (ads.txt) ---
-# Reemplaza esta línea con tu ID real de AdSense cuando lo tengas
-ADS_TXT_CONTENT = "google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0"
-
-# Lógica para servir ads.txt (Esencial para la validación de Google)
-query_params = st.query_params
-if "ads.txt" in query_params or ("page" in query_params and query_params["page"] == "ads.txt"):
-    st.text(ADS_TXT_CONTENT)
-    st.stop()
-
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
     page_title="ZPL & TXT to PDF Converter", 
     page_icon="🏷️",
     layout="centered"
 )
+
+
+# --- CONFIGURACIÓN PARA GOOGLE ADSENSE (ads.txt) ---
+# Reemplaza esta línea con tu ID real de AdSense cuando lo tengas
+ADS.TXT
+ADS_TXT_CONTENT = "google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0"
+
+# Lógica para servir ads.txt (Esencial para la validación de Google)
+query_params = st.query_params
+if "ads.txt" in query_params:
+    st.text("google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0")
+    st.stop()
+
+st.components.v1.html("""
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8311228733708760"
+     crossorigin="anonymous"></script>
+""", height=0)
 
 # --- ESTILO PERSONALIZADO ---
 st.markdown("""
@@ -147,5 +154,6 @@ st.components.v1.html("""
         </div>
     </div>
 """, height=260)
+
 
 
