@@ -15,7 +15,6 @@ st.set_page_config(
 
 # --- CONFIGURACIÓN PARA GOOGLE ADSENSE (ads.txt) ---
 # Reemplaza esta línea con tu ID real de AdSense cuando lo tengas
-ADS.TXT
 ADS_TXT_CONTENT = "google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0"
 
 # Lógica para servir ads.txt (Esencial para la validación de Google)
@@ -154,6 +153,7 @@ st.components.v1.html("""
         </div>
     </div>
 """, height=260)
+
 
 
 
