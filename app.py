@@ -7,7 +7,7 @@ from pypdf import PdfReader, PdfWriter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="ZPL & TXT to PDF Converter Robusto v2",
+    page_title="ZPL to PDF - Modo Seguro v3",
     page_icon="🏷️",
     layout="centered"
 )
@@ -40,7 +40,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- CABECERA Y MONETIZACIÓN SUPERIOR ---
-st.title("🏷️ Convertidor Robusto ZPL a PDF (v2)")
+st.title("🏷️ Convertidor ZPL a PDF (Modo Extra Seguro)")
 st.write("Transforma tus códigos Zebra en un PDF listo para imprimir (2x1 pulg / 51x25 mm).")
 
 # Bloque para Anuncio Horizontal
@@ -54,10 +54,10 @@ st.components.v1.html("""
 
 # --- LÓGICA DE PROCESAMIENTO ROBUSTO ---
 
-# --- CAMBIO AQUÍ: Reducimos el tamaño del lote por defecto a 10 ---
-def process_labels_robusto(zpl_blocks, batch_size=10):
+# --- CAMBIO AQUÍ: Reducimos el tamaño del lote a 5 ---
+def process_labels_robusto(zpl_blocks, batch_size=5):
     """
-    Procesa una lista de bloques ZPL en lotes pequeños para evitar errores 413.
+    Procesa una lista de bloques ZPL en lotes MUY pequeños para evitar errores 413.
     Une los resultados en un solo PDF usando pypdf.
     """
     pdf_writer = PdfWriter()
@@ -88,6 +88,7 @@ def process_labels_robusto(zpl_blocks, batch_size=10):
 
         for attempt in range(max_retries):
             try:
+                # Aumentamos el timeout por si acaso
                 response = requests.post(url, headers=headers, data=batch_zpl_string.encode('utf-8'), timeout=60)
                 
                 if response.status_code == 200:
@@ -100,15 +101,14 @@ def process_labels_robusto(zpl_blocks, batch_size=10):
                     
                     labels_procesadas_count += paginas_en_lote
                     batch_success = True
-                    time.sleep(0.5) 
+                    time.sleep(0.3) # Pequeña pausa
                     break 
                 elif response.status_code == 429:
                      status_text.warning(f"⚠️ Límite de velocidad de API. Esperando 5s...")
                      time.sleep(5)
-                # --- CAMBIO AQUÍ: Manejo específico del error 413 ---
                 elif response.status_code == 413:
-                     status_text.error(f"❌ Error 413 en lote {batch_number}: El lote es muy pesado. Intenta reducir más el 'batch_size' en el código.")
-                     # Si es 413, no tiene sentido reintentar el mismo lote pesado, fallará igual. Salimos del loop de intentos.
+                     status_text.error(f"❌ Error 413 en lote {batch_number}: ¡Tus etiquetas son extremadamente pesadas! Incluso un lote de 5 excede el límite.")
+                     # Si falla con 5, es crítico.
                      break 
                 else:
                     status_text.warning(f"⚠️ Error API lote {batch_number} (Intento {attempt+1}): Código {response.status_code}. Reintentando...")
@@ -119,8 +119,7 @@ def process_labels_robusto(zpl_blocks, batch_size=10):
                 time.sleep(retry_delay)
         
         if not batch_success:
-             st.error(f"❌ ERROR CRÍTICO: No se pudo procesar el lote {batch_number}. El PDF final estará incompleto o vacío.")
-             # Importante: Si un lote falla por 413, detenemos todo para que el usuario ajuste.
+             st.error(f"❌ ERROR CRÍTICO: Se detuvo el proceso en el lote {batch_number} por errores persistentes.")
              return None, 0
 
         percent = min((i + batch_size) / total_blocks, 1.0)
@@ -152,7 +151,6 @@ if uploaded_file:
         except UnicodeDecodeError:
              content = raw_data.decode("latin-1")
 
-        # Regex robusto para encontrar bloques
         zpl_blocks = re.findall(r'(\^XA.*?\^XZ)', content, re.DOTALL | re.MULTILINE)
         
         num_detected = len(zpl_blocks)
@@ -161,12 +159,14 @@ if uploaded_file:
             st.error("❌ No se detectaron etiquetas válidas en el archivo. Asegúrate de que cada etiqueta empiece con ^XA y termine con ^XZ.")
         else:
             st.info(f"✅ Se han detectado *{num_detected}* bloques de etiquetas en el archivo.")
-            st.info("ℹ️ Se procesarán en lotes de 10 para evitar errores de tamaño.")
+            # --- CAMBIO AQUÍ: Aviso visual ---
+            st.warning("ℹ️ Debido a errores previos de tamaño (413), se procesarán en lotes MUY PEQUEÑOS de 5 etiquetas. Esto tomará un poco más de tiempo pero es más seguro.")
             
-            if st.button("GENERAR PDF ROBUSTO (Lotes de 10) 🚀", type="primary"):
-                with st.spinner("Procesando por lotes pequeños..."):
-                    # --- CAMBIO AQUÍ: Llamamos con batch_size=10 ---
-                    pdf_bytes, total_paginas = process_labels_robusto(zpl_blocks, batch_size=10)
+            # --- CAMBIO AQUÍ: Botón ---
+            if st.button("GENERAR PDF (Lotes de 5) 🚀", type="primary"):
+                with st.spinner("Procesando lentamente para evitar errores..."):
+                    # --- CAMBIO AQUÍ: Llamamos con batch_size=5 ---
+                    pdf_bytes, total_paginas = process_labels_robusto(zpl_blocks, batch_size=5)
                     
                     if pdf_bytes:
                         st.balloons()
@@ -175,7 +175,7 @@ if uploaded_file:
                         st.download_button(
                             label="📥 DESCARGAR PDF FINAL",
                             data=pdf_bytes,
-                            file_name="etiquetas_robustas_2x1.pdf",
+                            file_name="etiquetas_seguras_2x1.pdf",
                             mime="application/pdf"
                         )
     except Exception as e:
@@ -187,10 +187,10 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("""
-    ### 📖 Instrucciones V2
+    ### 📖 Instrucciones V3
     1. Sube tu archivo con múltiples etiquetas.
-    2. El sistema las procesará en *lotes seguros de 10*.
-    3. Espera a que la barra de progreso termine.
+    2. El sistema las procesará en *lotes extra seguros de 5*.
+    3. Ten paciencia mientras la barra de progreso avanza.
     4. Descarga tu PDF completo.
     """)
 
@@ -209,5 +209,3 @@ st.components.v1.html("""
         </div>
     </div>
 """, height=260)
-
-
