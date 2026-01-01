@@ -7,8 +7,8 @@ from pypdf import PdfReader, PdfWriter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="ZPL to PDF - Modo Seguro v3",
-    page_icon="🏷️",
+    page_title="ZPL Diagnóstico y Conversión",
+    page_icon="🕵️‍♂️",
     layout="centered"
 )
 
@@ -40,8 +40,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- CABECERA Y MONETIZACIÓN SUPERIOR ---
-st.title("🏷️ Convertidor ZPL a PDF (Modo Extra Seguro)")
-st.write("Transforma tus códigos Zebra en un PDF listo para imprimir (2x1 pulg / 51x25 mm).")
+st.title("🕵️‍♂️ Convertidor ZPL: Modo Diagnóstico")
+st.write("Procesamiento 1 a 1 para detectar etiquetas corruptas o 'pesadas'.")
 
 # Bloque para Anuncio Horizontal
 st.components.v1.html("""
@@ -52,17 +52,11 @@ st.components.v1.html("""
     </div>
 """, height=100)
 
-# --- LÓGICA DE PROCESAMIENTO ROBUSTO ---
+# --- LÓGICA DE PROCESAMIENTO ROBUSTO CON DIAGNÓSTICO ---
 
-# --- CAMBIO AQUÍ: Reducimos el tamaño del lote a 5 ---
-def process_labels_robusto(zpl_blocks, batch_size=5):
-    """
-    Procesa una lista de bloques ZPL en lotes MUY pequeños para evitar errores 413.
-    Une los resultados en un solo PDF usando pypdf.
-    """
+# --- CAMBIO CLAVE: batch_size=1 por defecto para aislar el problema ---
+def process_labels_diagnostico(zpl_blocks, batch_size=1):
     pdf_writer = PdfWriter()
-    
-    # URL para etiquetas de 2x1 pulgadas a 8dpmm (203dpi)
     url = 'http://api.labelary.com/v1/printers/8dpmm/labels/2x1/0/'
     headers = {'Accept': 'application/pdf'}
     
@@ -71,58 +65,73 @@ def process_labels_robusto(zpl_blocks, batch_size=5):
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
-    # Procesar en bucle por lotes
+    error_container = st.container() # Contenedor para reportar errores específicos
+
+    # Procesar en bucle por lotes (ahora lotes de 1)
     for i in range(0, total_blocks, batch_size):
         current_batch = zpl_blocks[i : i + batch_size]
-        batch_number = (i // batch_size) + 1
-        total_batches = (total_blocks + batch_size - 1) // batch_size
         
-        status_text.markdown(f"🔄 Procesando lote *{batch_number}/{total_batches}* (Etiquetas {i+1} a {min(i + batch_size, total_blocks)})...")
+        # Índices para mostrar al usuario (base 1)
+        start_idx = i + 1
+        end_idx = min(i + batch_size, total_blocks)
+        batch_label = f"etiqueta {start_idx}" if batch_size == 1 else f"etiquetas {start_idx}-{end_idx}"
 
         batch_zpl_string = "\n".join(current_batch)
+        
+        # --- DIAGNÓSTICO DE PESO ---
+        batch_bytes = batch_zpl_string.encode('utf-8')
+        payload_size_kb = len(batch_bytes) / 1024
+        
+        status_text.markdown(f"⚖️ Procesando *{batch_label}*. Tamaño del envío: *{payload_size_kb:.2f} KB*...")
 
-        max_retries = 3
-        retry_delay = 2
+        max_retries = 2 # Menos reintentos en modo diagnóstico
+        retry_delay = 1
         batch_success = False
 
         for attempt in range(max_retries):
             try:
-                # Aumentamos el timeout por si acaso
-                response = requests.post(url, headers=headers, data=batch_zpl_string.encode('utf-8'), timeout=60)
+                # Usamos batch_bytes directamente que ya lo calculamos
+                response = requests.post(url, headers=headers, data=batch_bytes, timeout=30)
                 
                 if response.status_code == 200:
                     batch_pdf_bytes = io.BytesIO(response.content)
                     batch_reader = PdfReader(batch_pdf_bytes)
-                    
-                    paginas_en_lote = len(batch_reader.pages)
                     for page in batch_reader.pages:
                         pdf_writer.add_page(page)
                     
-                    labels_procesadas_count += paginas_en_lote
+                    labels_procesadas_count += len(batch_reader.pages)
                     batch_success = True
-                    time.sleep(0.3) # Pequeña pausa
+                    # Pausa muy breve para no saturar demasiado
+                    time.sleep(0.2) 
                     break 
                 elif response.status_code == 429:
-                     status_text.warning(f"⚠️ Límite de velocidad de API. Esperando 5s...")
-                     time.sleep(5)
+                     status_text.warning(f"⚠️ Límite de velocidad de API. Esperando 3s...")
+                     time.sleep(3)
                 elif response.status_code == 413:
-                     status_text.error(f"❌ Error 413 en lote {batch_number}: ¡Tus etiquetas son extremadamente pesadas! Incluso un lote de 5 excede el límite.")
-                     # Si falla con 5, es crítico.
-                     break 
+                     # --- REPORTE DETALLADO DEL ERROR 413 ---
+                     error_msg = f"❌ *ERROR 413 FATAL en {batch_label}*."
+                     error_msg += f" Esta etiqueta individual pesa *{payload_size_kb:.2f} KB*, lo cual es demasiado para el servidor."
+                     error_msg += " Revisa el código ZPL de esta etiqueta específica en tu archivo original, probablemente contiene datos corruptos o imágenes enormes ocultas."
+                     error_container.error(error_msg)
+                     status_text.error("Proceso detenido por etiqueta corrupta.")
+                     break # Romper el bucle de reintentos
                 else:
-                    status_text.warning(f"⚠️ Error API lote {batch_number} (Intento {attempt+1}): Código {response.status_code}. Reintentando...")
+                    # Otros errores
                     time.sleep(retry_delay)
 
             except requests.exceptions.RequestException as e:
-                status_text.warning(f"⚠️ Error conexión lote {batch_number} (Intento {attempt+1}): {e}. Reintentando...")
                 time.sleep(retry_delay)
         
         if not batch_success:
-             st.error(f"❌ ERROR CRÍTICO: Se detuvo el proceso en el lote {batch_number} por errores persistentes.")
-             return None, 0
+             # Si falló y no fue por 413 (que ya se reportó arriba), reportamos aquí
+             if response is None or response.status_code != 413:
+                 error_container.error(f"❌ No se pudo procesar {batch_label} tras reintentos. Posible error de red o API caída momentáneamente.")
+             
+             st.error("⚠️ El proceso se detuvo incompleto debido a errores. Descarga lo que se pudo generar.")
+             # Devolvemos lo que tengamos hasta ahora
+             break
 
-        percent = min((i + batch_size) / total_blocks, 1.0)
+        percent = min(end_idx / total_blocks, 1.0)
         progress_bar.progress(percent)
 
     output_stream = io.BytesIO()
@@ -132,15 +141,14 @@ def process_labels_robusto(zpl_blocks, batch_size=5):
     status_text.empty()
     progress_bar.empty()
     
-    return final_pdf_bytes, labels_procesadas_count
+    return final_pdf_bytes, labels_procesadas_count, total_blocks
 
 # --- INTERFAZ DE USUARIO ---
 
 uploaded_file = st.file_uploader(
-    "Sube tu archivo .txt o .zpl (con múltiples etiquetas)",
+    "Sube tu archivo .txt o .zpl",
     type=["txt", "zpl", "prn"],
-    help="El archivo debe contener bloques ZPL que empiecen con ^XA y terminen con ^XZ",
-    key="zpl_file_uploader_main"
+    key="zpl_file_uploader_diag"
 )
 
 if uploaded_file:
@@ -152,60 +160,36 @@ if uploaded_file:
              content = raw_data.decode("latin-1")
 
         zpl_blocks = re.findall(r'(\^XA.*?\^XZ)', content, re.DOTALL | re.MULTILINE)
-        
         num_detected = len(zpl_blocks)
 
         if num_detected == 0:
-            st.error("❌ No se detectaron etiquetas válidas en el archivo. Asegúrate de que cada etiqueta empiece con ^XA y termine con ^XZ.")
+            st.error("❌ No se detectaron etiquetas válidas (^XA...^XZ).")
         else:
-            st.info(f"✅ Se han detectado *{num_detected}* bloques de etiquetas en el archivo.")
-            # --- CAMBIO AQUÍ: Aviso visual ---
-            st.warning("ℹ️ Debido a errores previos de tamaño (413), se procesarán en lotes MUY PEQUEÑOS de 5 etiquetas. Esto tomará un poco más de tiempo pero es más seguro.")
+            st.info(f"✅ Se detectaron *{num_detected}* etiquetas.")
+            st.warning("ℹ️ MODO DIAGNÓSTICO: Se procesarán UNA POR UNA para encontrar la causa del 'Error 413'. Esto tomará unos minutos. Por favor ten paciencia y observa los mensajes de estado.")
             
-            # --- CAMBIO AQUÍ: Botón ---
-            if st.button("GENERAR PDF (Lotes de 5) 🚀", type="primary"):
-                with st.spinner("Procesando lentamente para evitar errores..."):
-                    # --- CAMBIO AQUÍ: Llamamos con batch_size=5 ---
-                    pdf_bytes, total_paginas = process_labels_robusto(zpl_blocks, batch_size=5)
+            # Usamos un key diferente para forzar el renderizado del botón
+            if st.button("INICIAR PROCESO 1 A 1 🕵️‍♂️", type="primary", key="btn_diag_start"):
+                with st.spinner("Procesando etiquetas individualmente y verificando peso..."):
+                    # --- LLAMADA CON batch_size=1 IMPLÍCITO ---
+                    pdf_bytes, total_paginas, total_intentadas = process_labels_diagnostico(zpl_blocks)
                     
-                    if pdf_bytes:
-                        st.balloons()
-                        st.success(f"¡Éxito! Se generó un PDF con un total de *{total_paginas}* etiquetas.")
-                        
+                    if pdf_bytes and total_paginas > 0:
+                        if total_paginas == total_intentadas:
+                             st.balloons()
+                             st.success(f"✅ ¡Éxito total! Se procesaron las {total_paginas} etiquetas sin errores 413.")
+                        else:
+                             st.warning(f"⚠️ Proceso finalizado parcialmente. Se generaron *{total_paginas} de {total_intentadas}* etiquetas. Revisa los errores rojos arriba para ver cuál falló.")
+
                         st.download_button(
-                            label="📥 DESCARGAR PDF FINAL",
+                            label="📥 DESCARGAR PDF GENERADO",
                             data=pdf_bytes,
-                            file_name="etiquetas_seguras_2x1.pdf",
+                            file_name="etiquetas_diagnostico.pdf",
                             mime="application/pdf"
                         )
     except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
+        st.error(f"Error de lectura: {e}")
 
-# --- PIE DE PÁGINA Y SEO ---
+# --- PIE DE PÁGINA ---
 st.markdown("---")
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("""
-    ### 📖 Instrucciones V3
-    1. Sube tu archivo con múltiples etiquetas.
-    2. El sistema las procesará en *lotes extra seguros de 5*.
-    3. Ten paciencia mientras la barra de progreso avanza.
-    4. Descarga tu PDF completo.
-    """)
-
-with col2:
-    st.markdown("""
-    ### ⚖️ Legal
-    - [Política de Privacidad](/?page=privacy)
-    - [Contacto](mailto:tuemail@dominio.com)
-    """)
-
-# Bloque para Anuncio Cuadrado (Inferior)
-st.components.v1.html("""
-    <div style="text-align:center; margin-top: 20px;">
-        <div style="background-color: #ffffff; border: 1px solid #ddd; border-radius: 8px; height: 250px; display: flex; align-items: center; justify-content: center;">
-            <p style="color: #999; font-family: sans-serif; font-size: 14px;">ANUNCIO DE GOOGLE ADSENSE</p>
-        </div>
-    </div>
-""", height=260)
+st.write("Modo de diagnóstico para identificar errores de 'Payload Too Large'.")
