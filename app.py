@@ -1,13 +1,13 @@
 import streamlit as st
-import re
 import requests
 import io
 import time
+# Ya no necesitamos regex (re) para la extracción principal
 from pypdf import PdfReader, PdfWriter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="ZPL a PDF - Conversor Ultra Seguro V5",
+    page_title="ZPL a PDF - Conversor Total V6",
     page_icon="🏷️",
     layout="centered"
 )
@@ -40,8 +40,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- CABECERA Y MONETIZACIÓN SUPERIOR ---
-st.title("🏷️ Convertidor ZPL a PDF (Ultra Seguro V5)")
-st.write("Procesamiento paso a paso con reintentos avanzados para máxima fiabilidad ante inestabilidad de red.")
+st.title("🏷️ Convertidor ZPL Total (V6 - Incluye Repetidos)")
+st.write("Garantiza el procesamiento de CADA bloque ZPL del archivo, incluyendo etiquetas repetidas, usando el modo ultra seguro paso a paso.")
 
 # Bloque para Anuncio Horizontal
 st.components.v1.html("""
@@ -52,10 +52,36 @@ st.components.v1.html("""
     </div>
 """, height=100)
 
-# --- LÓGICA DE PROCESAMIENTO ULTRA SEGURO ---
+# --- FUNCIÓN DE EXTRACCIÓN MANUAL (NUEVO EN V6) ---
+def extraer_bloques_zpl_total(content):
+    """
+    Extrae bloques ZPL dividiendo manualmente el texto.
+    Garantiza que se capturan etiquetas idénticas repetidas.
+    """
+    blocks = []
+    # Dividimos el contenido gigante usando el inicio de etiqueta como separador
+    raw_chunks = content.split('^XA')
 
-def process_labels_ultra_secure(zpl_blocks):
-    # CONFIGURACIÓN: Procesamos de 1 en 1.
+    # El primer fragmento (raw_chunks[0]) es lo que hay antes del primer ^XA, lo ignoramos.
+    # Iteramos desde el segundo fragmento.
+    for chunk in raw_chunks[1:]:
+        # En cada fragmento, buscamos dónde está el primer cierre ^XZ
+        xz_index = chunk.find('^XZ')
+        
+        if xz_index != -1:
+            # Cortamos desde el principio hasta justo después del ^XZ (+3 caracteres)
+            clean_content = chunk[:xz_index+3]
+            # Reconstruimos el bloque añadiendo el ^XA que quitamos al hacer split
+            full_block = '^XA' + clean_content
+            # Añadimos a la lista. Esto NO elimina duplicados.
+            blocks.append(full_block)
+            
+    return blocks
+
+# --- LÓGICA DE PROCESAMIENTO ULTRA SEGURO (V5 MANTENIDA) ---
+
+def process_labels_total_secure(zpl_blocks):
+    # CONFIGURACIÓN: Procesamos de 1 en 1 para máxima seguridad.
     batch_size = 1 
     
     pdf_writer = PdfWriter()
@@ -71,17 +97,16 @@ def process_labels_ultra_secure(zpl_blocks):
     # Procesar en bucle (etiqueta por etiqueta)
     for i, zpl_block in enumerate(zpl_blocks):
         label_num = i + 1
-        status_text.markdown(f"🔄 Procesando etiqueta *{label_num} de {total_blocks}*...")
+        # Mostramos un mensaje claro de que estamos procesando instancias individuales
+        status_text.markdown(f"🔄 Procesando instancia de etiqueta *{label_num} de {total_blocks}*...")
 
-        # --- MEJORA V5: MÁS REINTENTOS Y ESPERA PROGRESIVA ---
-        max_retries = 5  # Aumentado de 3 a 5
-        base_delay = 2   # Espera base de 2 segundos
-
+        # --- REINTENTOS Y ESPERA PROGRESIVA ---
+        max_retries = 5
+        base_delay = 2
         success = False
 
         for attempt in range(max_retries):
             try:
-                # Timeout de 30s es suficiente para una sola etiqueta
                 response = requests.post(url, headers=headers, data=zpl_block.encode('utf-8'), timeout=30)
                 
                 if response.status_code == 200:
@@ -94,36 +119,29 @@ def process_labels_ultra_secure(zpl_blocks):
                     
                     labels_procesadas_count += paginas_recibidas
                     success = True
-                    # Brevísima pausa de cortesía si todo va bien
                     time.sleep(0.1) 
                     break 
 
                 elif response.status_code == 429:
-                     # Si nos dice que paremos, paramos 5 segundos fijos.
-                     status_text.warning(f"⚠️ API saturada (429). Pausando 5s antes de reintentar etiqueta {label_num}...")
+                     status_text.warning(f"⚠️ API saturada (429). Pausando 5s antes de reintentar instancia {label_num}...")
                      time.sleep(5)
 
                 elif response.status_code == 413:
-                     # Esto no debería pasar en modo 1 a 1 tras el diagnóstico.
-                     st.error(f"❌ Error fatal: La etiqueta {label_num} es demasiado grande (413).")
+                     st.error(f"❌ Error fatal: La instancia {label_num} es demasiado grande (413).")
                      return None, 0
                 else:
-                    # Otros errores del servidor (ej. 500, 503)
-                    # Espera progresiva: 2s, 4s, 6s, 8s, 10s
                     wait_time = base_delay + (attempt * 2)
-                    status_text.warning(f"⚠️ Error del servidor ({response.status_code}) en etiqueta {label_num}. Reintentando en {wait_time}s (Intento {attempt+1}/{max_retries})...")
+                    status_text.warning(f"⚠️ Error del servidor ({response.status_code}) en instancia {label_num}. Reintentando en {wait_time}s...")
                     time.sleep(wait_time)
 
             except requests.exceptions.RequestException as e:
-                # Errores de conexión (internet caído momentáneamente, DNS, etc)
                 wait_time = base_delay + (attempt * 2)
-                # Simplificamos el mensaje de error para que no sea tan largo en pantalla
                 error_msg = str(e).split(':')[0] 
-                status_text.warning(f"⚠️ Problema de conexión en etiqueta {label_num}: {error_msg}. Reintentando en {wait_time}s (Intento {attempt+1}/{max_retries})...")
+                status_text.warning(f"⚠️ Problema de conexión en instancia {label_num}: {error_msg}. Reintentando en {wait_time}s...")
                 time.sleep(wait_time)
         
         if not success:
-             st.error(f"❌ ERROR CRÍTICO: Se agotaron los 5 intentos para la etiqueta {label_num}. La API de Labelary no responde para esta etiqueta en este momento. Intenta más tarde.")
+             st.error(f"❌ ERROR CRÍTICO: Se agotaron los 5 intentos para la instancia {label_num}. Proceso detenido.")
              return None, 0
 
         percent = (i + 1) / total_blocks
@@ -141,9 +159,9 @@ def process_labels_ultra_secure(zpl_blocks):
 # --- INTERFAZ DE USUARIO ---
 
 uploaded_file = st.file_uploader(
-    "Sube tu archivo .txt o .zpl (con múltiples etiquetas)",
+    "Sube tu archivo .txt o .zpl (con múltiples etiquetas, incluso repetidas)",
     type=["txt", "zpl", "prn"],
-    key="zpl_file_uploader_v5"
+    key="zpl_file_uploader_v6"
 )
 
 if uploaded_file:
@@ -154,30 +172,29 @@ if uploaded_file:
         except UnicodeDecodeError:
              content = raw_data.decode("latin-1")
 
-        # Regex para encontrar bloques completos
-        zpl_blocks = re.findall(r'(\^XA.*?\^XZ)', content, re.DOTALL | re.MULTILINE)
+        # --- CAMBIO PRINCIPAL V6: Usamos la nueva función de extracción manual ---
+        zpl_blocks = extraer_bloques_zpl_total(content)
         num_detected = len(zpl_blocks)
 
         if num_detected == 0:
-            st.error("❌ No se detectaron etiquetas válidas (^XA...^XZ) en el archivo.")
+            st.error("❌ No se detectaron bloques válidos (^XA...^XZ) en el archivo.")
         else:
-            st.info(f"✅ Se han detectado *{num_detected}* diseños de etiquetas distintos.")
+            # Ahora el mensaje confirma que se detectaron todas las instancias
+            st.info(f"✅ Se han detectado *{num_detected}* instancias de etiquetas en total (incluyendo repetidas).")
+            st.write("El PDF final contendrá exactamente este número de etiquetas.")
             
-            if st.button("GENERAR PDF FINAL (ULTRA SEGURO) 🚀", type="primary"):
-                with st.spinner("Procesando etiquetas con alta tolerancia a fallos de red..."):
-                    pdf_bytes, total_paginas = process_labels_ultra_secure(zpl_blocks)
+            if st.button("GENERAR PDF TOTAL (Incluir Repetidos) 🚀", type="primary"):
+                with st.spinner(f"Procesando las {num_detected} etiquetas una por una..."):
+                    pdf_bytes, total_paginas = process_labels_total_secure(zpl_blocks)
                     
                     if pdf_bytes:
                         st.balloons()
-                        msg = f"¡Éxito! Se generaron *{total_paginas}* etiquetas correctamente."
-                        if total_paginas > num_detected:
-                             msg += " (Algunos diseños incluían copias múltiples)."
-                        st.success(msg)
+                        st.success(f"¡Éxito absoluto! Se generó un PDF con *{total_paginas}* páginas.")
                         
                         st.download_button(
-                            label="📥 DESCARGAR PDF",
+                            label="📥 DESCARGAR PDF COMPLETO",
                             data=pdf_bytes,
-                            file_name="etiquetas_final_v5.pdf",
+                            file_name="etiquetas_total_v6.pdf",
                             mime="application/pdf"
                         )
     except Exception as e:
@@ -189,10 +206,10 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("""
-    ### 📖 Instrucciones V5
-    1. Sube tu archivo de etiquetas.
-    2. El sistema procesará una a una, con *múltiples reintentos y esperas* si la API falla.
-    3. Ten paciencia, este método prioriza terminar bien sobre la velocidad.
+    ### 📖 Instrucciones V6 (Total)
+    1. Sube tu archivo. *Se procesarán todas las etiquetas, incluidas las repetidas.*
+    2. Si tu archivo tiene 326 bloques, obtendrás 326 etiquetas.
+    3. Se usa el modo ultra seguro (lento pero fiable).
     4. Descarga tu PDF completo.
     """)
 
