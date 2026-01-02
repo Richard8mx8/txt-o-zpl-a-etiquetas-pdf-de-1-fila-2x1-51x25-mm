@@ -7,12 +7,12 @@ from pypdf import PdfReader, PdfWriter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
-    page_title="ZPL Total - Sin Deduplicar",
-    page_icon="🏭",
+    page_title="ZPL con Cantidades (^PQ)",
+    page_icon="🔢",
     layout="centered"
 )
 
-# --- CONFIGURACIÓN PARA GOOGLE ADSENSE ---
+# --- CONFIGURACIÓN ADSENSE ---
 query_params = st.query_params
 if "ads.txt" in query_params:
     st.text("google.com, pub-8311228733708760, DIRECT, f08c47fec0942fa0")
@@ -31,7 +31,7 @@ st.markdown("""
         width: 100%;
         border-radius: 5px;
         height: 3em;
-        background-color: #28a745; /* Verde para indicar éxito */
+        background-color: #6f42c1; /* Color morado para diferenciar esta versión */
         color: white;
         font-weight: bold;
     }
@@ -39,43 +39,49 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- TÍTULO ---
-st.title("🏭 Impresora Masiva ZPL (326/326)")
-st.write("Este sistema procesa *TODAS* las etiquetas del archivo, incluyendo las repetidas. Ideal para inventarios.")
+st.title("🔢 Generador ZPL con Multiplicador (^PQ)")
+st.write("Detecta automáticamente el comando ^PQ (Print Quantity) para repetir las etiquetas las veces necesarias.")
 
-# --- LÓGICA DE EXTRACCIÓN ESTRICTA ---
-def get_all_blocks_sequential(content):
+# --- FUNCIÓN PARA DETECTAR CANTIDAD ---
+def obtener_cantidad_zpl(zpl_code):
     """
-    Usa expresiones regulares para encontrar CADA ocurrencia de ^XA...^XZ.
-    Al usar findall sin sets ni dicts, se mantiene el orden exacto y las repeticiones.
+    Busca el comando ^PQ (Print Quantity) y extrae el número.
+    Ejemplo: ^PQ5 -> Retorna 5
+    Si no encuentra nada, asume que es 1.
     """
-    # El patrón busca desde ^XA hasta ^XZ, incluyendo saltos de línea (DOTALL)
-    # y es "no codicioso" (*?) para no comerse varias etiquetas en una.
-    raw_blocks = re.findall(r'(\^XA.*?\^XZ)', content, re.DOTALL | re.MULTILINE)
-    return raw_blocks
+    # Regex busca ^PQ seguido de dígitos
+    match = re.search(r'\^PQ(\d+)', zpl_code)
+    if match:
+        return int(match.group(1))
+    return 1
 
-# --- LÓGICA DE PROCESAMIENTO ROBUSTO ---
-def process_labels_sequential(zpl_blocks):
+# --- PROCESAMIENTO INTELIGENTE ---
+def process_labels_with_quantity(zpl_blocks):
     pdf_writer = PdfWriter()
     url = 'http://api.labelary.com/v1/printers/8dpmm/labels/2x1/0/'
     headers = {'Accept': 'application/pdf'}
     
     total_blocks = len(zpl_blocks)
-    labels_procesadas_count = 0
+    total_etiquetas_finales = 0
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # Iteramos sobre la lista. Si hay 326 elementos, el bucle corre 326 veces.
     for i, zpl_block in enumerate(zpl_blocks):
-        label_num = i + 1
+        # 1. Detectar cuántas copias necesita esta etiqueta
+        cantidad_copias = obtener_cantidad_zpl(zpl_block)
         
-        # Mensaje de estado
-        status_text.markdown(f"🖨️ Procesando etiqueta *{label_num} de {total_blocks}*...")
+        label_num = i + 1
+        status_text.markdown(f"🔄 Procesando diseño *{label_num}/{total_blocks}* (Se repetirá *{cantidad_copias}* veces)...")
 
-        # Reintentos robustos (Copiado de la versión V6 exitosa)
+        # 2. Obtener la imagen de la API (Solo pedimos 1 copia a la API para no saturarla)
+        #    Nota: Aunque el ZPL tenga ^PQ5, la API nos devolverá lo que tenga, 
+        #    pero nosotros controlaremos la repetición en el PDF.
+        
         max_retries = 5
         base_delay = 2
         success = False
+        pdf_pagina_modelo = None # Aquí guardaremos la página "molde"
 
         for attempt in range(max_retries):
             try:
@@ -85,16 +91,12 @@ def process_labels_sequential(zpl_blocks):
                     batch_pdf_bytes = io.BytesIO(response.content)
                     batch_reader = PdfReader(batch_pdf_bytes)
                     
-                    # Añadimos las páginas al PDF final
-                    paginas_recibidas = len(batch_reader.pages)
-                    for page in batch_reader.pages:
-                        pdf_writer.add_page(page)
-                    
-                    labels_procesadas_count += paginas_recibidas
-                    success = True
-                    time.sleep(0.1) # Pequeña pausa
-                    break 
-
+                    # Tomamos la primera página que nos devuelve la API como "modelo"
+                    if len(batch_reader.pages) > 0:
+                        pdf_pagina_modelo = batch_reader.pages[0]
+                        success = True
+                        time.sleep(0.1) 
+                        break 
                 elif response.status_code == 429:
                      status_text.warning(f"⚠️ API llena. Pausando 5s...")
                      time.sleep(5)
@@ -102,20 +104,25 @@ def process_labels_sequential(zpl_blocks):
                      st.error(f"❌ La etiqueta {label_num} es demasiado pesada.")
                      return None, 0
                 else:
-                    wait_time = base_delay + (attempt * 2)
-                    time.sleep(wait_time)
+                    time.sleep(base_delay + (attempt * 2))
 
             except requests.exceptions.RequestException:
-                wait_time = base_delay + (attempt * 2)
-                time.sleep(wait_time)
+                time.sleep(base_delay + (attempt * 2))
         
-        if not success:
-             st.error(f"❌ Falló la etiqueta {label_num}. Proceso detenido.")
+        if not success or pdf_pagina_modelo is None:
+             st.error(f"❌ No se pudo generar el diseño {label_num}. Proceso detenido.")
              return None, 0
+        
+        # 3. MULTIPLICACIÓN MANUAL
+        # Ahora que tenemos el "molde" (pdf_pagina_modelo), lo agregamos al PDF final
+        # tantas veces como diga la variable 'cantidad_copias'
+        for _ in range(cantidad_copias):
+            pdf_writer.add_page(pdf_pagina_modelo)
+            total_etiquetas_finales += 1
 
         progress_bar.progress((i + 1) / total_blocks)
 
-    # Finalizar PDF
+    # Generar PDF Final
     output_stream = io.BytesIO()
     pdf_writer.write(output_stream)
     final_pdf_bytes = output_stream.getvalue()
@@ -123,14 +130,14 @@ def process_labels_sequential(zpl_blocks):
     status_text.empty()
     progress_bar.empty()
     
-    return final_pdf_bytes, labels_procesadas_count
+    return final_pdf_bytes, total_etiquetas_finales, total_blocks
 
 # --- INTERFAZ ---
 
 uploaded_file = st.file_uploader(
-    "Sube tu archivo .txt o .zpl completo",
+    "Sube tu archivo .txt o .zpl con códigos ^PQ",
     type=["txt", "zpl", "prn"],
-    key="zpl_file_uploader_v7"
+    key="zpl_file_uploader_v8"
 )
 
 if uploaded_file:
@@ -141,34 +148,33 @@ if uploaded_file:
         except UnicodeDecodeError:
              content = raw_data.decode("latin-1")
 
-        # PASO 1: Obtener la lista BRUTA de bloques (incluyendo repetidos)
-        zpl_blocks = get_all_blocks_sequential(content)
-        total_encontrados = len(zpl_blocks)
+        # Extraemos los bloques de diseño únicos
+        zpl_blocks = re.findall(r'(\^XA.*?\^XZ)', content, re.DOTALL | re.MULTILINE)
+        diseños_unicos = len(zpl_blocks)
 
-        if total_encontrados == 0:
-            st.error("❌ No se encontraron etiquetas.")
+        if diseños_unicos == 0:
+            st.error("❌ No se encontraron bloques ZPL.")
         else:
-            # --- VERIFICACIÓN VISUAL IMPORTANTE ---
-            st.info(f"✅ ANÁLISIS DEL ARCHIVO: Se encontraron *{total_encontrados}* bloques ZPL en total.")
+            # Pre-cálculo de cantidad total para informar al usuario
+            total_esperado = sum(obtener_cantidad_zpl(block) for block in zpl_blocks)
             
-            # Aquí le decimos al usuario lo que va a pasar
-            st.markdown(f"""
-            Esto significa que *se generarán {total_encontrados} etiquetas*.
-            * Si tu archivo tiene 131 diseños pero algunos se repiten, el total debe ser la suma (ej. 326).
-            * *Verifica:* ¿Es {total_encontrados} el número total de etiquetas físicas que necesitas?
-            """)
+            st.info(f"✅ ANÁLISIS: Se detectaron *{diseños_unicos}* diseños únicos.")
+            st.success(f"📊 Según los comandos ^PQ internos, se generarán *{total_esperado}* etiquetas en total.")
             
-            if st.button(f"IMPRIMIR LAS {total_encontrados} ETIQUETAS 🚀"):
-                with st.spinner("Generando PDF masivo..."):
-                    pdf_bytes, total_paginas = process_labels_sequential(zpl_blocks)
+            if st.button(f"GENERAR LAS {total_esperado} ETIQUETAS 🚀"):
+                with st.spinner("Generando y multiplicando etiquetas..."):
+                    pdf_bytes, total_generado, _ = process_labels_with_quantity(zpl_blocks)
                     
                     if pdf_bytes:
                         st.balloons()
-                        st.success(f"¡Listo! PDF generado con *{total_paginas}* páginas.")
+                        st.write(f"### Resumen Final:")
+                        st.write(f"- Diseños procesados: {diseños_unicos}")
+                        st.write(f"- Etiquetas generadas (con copias): *{total_generado}*")
+                        
                         st.download_button(
-                            label="📥 DESCARGAR PDF (326 etiquetas)",
+                            label=f"📥 DESCARGAR PDF ({total_generado} ETIQUETAS)",
                             data=pdf_bytes,
-                            file_name="etiquetas_completas_v7.pdf",
+                            file_name="etiquetas_con_cantidades_v8.pdf",
                             mime="application/pdf"
                         )
     except Exception as e:
@@ -176,4 +182,5 @@ if uploaded_file:
 
 # --- FOOTER ---
 st.markdown("---")
-st.write("Sistema V7: Sin deduplicación. Imprime exactamente lo que contiene el archivo.")
+st.write("Sistema V8: Detecta ^PQ y multiplica las páginas automáticamente.")
+
